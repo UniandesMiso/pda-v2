@@ -1,0 +1,6 @@
+Flask
+Flask-SQLAlchemy
+pulsar-client
+pulsar-client[avro]
+psycopg2-binary
+PyDispatcher
