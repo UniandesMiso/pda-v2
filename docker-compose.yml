@@ -1,0 +1,213 @@
+version: '3.9'
+
+networks:
+  app:
+    name: app-net
+    driver: bridge
+  pulsar:
+    name: pulsar-net
+    driver: bridge
+
+services:
+  zookeeper:
+    profiles: ['pulsar']
+    container_name: zookeeper
+    image: apachepulsar/pulsar:latest
+    restart: on-failure
+    environment:
+      - metadataStoreUrl=zk:zookeeper:2181
+      - PULSAR_MEM=-Xms256m -Xmx256m -XX:MaxDirectMemorySize=256m
+    networks:
+      - pulsar
+    volumes:
+      - ./data/zookeeper:/pulsar/data/zookeeper
+    command: >
+      bash -c "bin/apply-config-from-env.py conf/zookeeper.conf && \
+             bin/generate-zookeeper-config.sh conf/zookeeper.conf && \
+             exec bin/pulsar zookeeper"
+    healthcheck:
+      test: ['CMD', 'bin/pulsar-zookeeper-ruok.sh']
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  pulsar-init:
+    profiles: ['pulsar']
+    container_name: pulsar-init
+    image: apachepulsar/pulsar:latest
+    networks:
+      - pulsar
+    command: >
+      bin/pulsar initialize-cluster-metadata \
+               --cluster cluster-a \
+               --zookeeper zookeeper:2181 \
+               --configuration-store zookeeper:2181 \
+               --web-service-url http://broker:8080 \
+               --broker-service-url pulsar://broker:6650
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+
+  bookie:
+    profiles: ['pulsar']
+    image: apachepulsar/pulsar:latest
+    container_name: bookie
+    restart: on-failure
+    environment:
+      - clusterName=cluster-a
+      - zkServers=zookeeper:2181
+      - metadataServiceUri=metadata-store:zk:zookeeper:2181
+      - advertisedAddress=bookie
+      - BOOKIE_MEM=-Xms512m -Xmx512m -XX:MaxDirectMemorySize=256m
+    networks:
+      - pulsar
+    volumes:
+      - ./data/bookkeeper:/pulsar/data/bookkeeper
+    command: bash -c "bin/apply-config-from-env.py conf/bookkeeper.conf && exec bin/pulsar bookie"
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+      pulsar-init:
+        condition: service_completed_successfully
+
+  broker:
+    profiles: ['pulsar']
+    container_name: broker
+    image: apachepulsar/pulsar:latest
+    restart: on-failure
+    environment:
+      - metadataStoreUrl=zk:zookeeper:2181
+      - zookeeperServers=zookeeper:2181
+      - clusterName=cluster-a
+      - managedLedgerDefaultEnsembleSize=1
+      - managedLedgerDefaultWriteQuorum=1
+      - managedLedgerDefaultAckQuorum=1
+      - advertisedAddress=broker
+      - advertisedListeners=external:pulsar://broker:6650
+      - PULSAR_MEM=-Xms512m -Xmx512m -XX:MaxDirectMemorySize=256m
+    networks:
+      - pulsar
+    ports:
+      - '6650:6650'
+      - '8080:8080'
+    command: bash -c "bin/apply-config-from-env.py conf/broker.conf && exec bin/pulsar broker"
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+      bookie:
+        condition: service_started
+
+  db:
+    profiles: ['db']
+    container_name: postgres
+    image: postgres:16-alpine
+    environment:
+      PGUSER: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: pda
+    networks:
+      - app
+    ports:
+      - '5432:5432'
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready', '-U', 'postgres', '-d', 'pda']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    depends_on:
+      - broker
+
+  properties:
+    profiles: ['properties', 'services']
+    container_name: properties
+    image: properties
+    build: ./src/properties
+    restart: on-failure
+    environment:
+      DB_USER: postgres
+      DB_PASS: postgres
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: pda
+      BROKER_HOST: broker
+      BROKER_PORT: 6650
+    networks:
+      - app
+      - pulsar
+    ports:
+      - '3000:3000'
+    depends_on:
+      db:
+        condition: service_healthy
+
+  contracts:
+    profiles: ['contracts', 'services']
+    container_name: contracts
+    image: contracts
+    build: ./src/contracts
+    restart: on-failure
+    environment:
+      DB_USER: postgres
+      DB_PASS: postgres
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: pda
+      BROKER_HOST: broker
+      BROKER_PORT: 6650
+    networks:
+      - app
+      - pulsar
+    ports:
+      - '3001:3001'
+    depends_on:
+      db:
+        condition: service_healthy
+
+  listings:
+    profiles: ['listings', 'services']
+    container_name: listings
+    image: listings
+    build: ./src/listings
+    restart: on-failure
+    environment:
+      DB_USER: postgres
+      DB_PASS: postgres
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: pda
+      BROKER_HOST: broker
+      BROKER_PORT: 6650
+    networks:
+      - app
+      - pulsar
+    ports:
+      - '3002:3002'
+    depends_on:
+      db:
+        condition: service_healthy
+
+  bff:
+    profiles: ['bff', 'services']
+    container_name: bff
+    image: bff
+    build: ./src/bff
+    restart: on-failure
+    environment:
+      BROKER_HOST: broker
+      BROKER_PORT: 6650
+      PROPERTIES_HOST: properties
+      PROPERTIES_PORT: 3000
+      CONTRACTS_HOST: contracts
+      CONTRACTS_PORT: 3001
+      LISTINGS_HOST: listings
+      LISTINGS_PORT: 3002
+    networks:
+      - app
+      - pulsar
+    ports:
+      - '8000:8000'
+    depends_on:
+      db:
+        condition: service_healthy
