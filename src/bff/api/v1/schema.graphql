@@ -1,0 +1,83 @@
+type Ground {
+  id: ID!
+  createdAt: String!
+  updatedAt: String!
+  address: String
+  location: String
+  width: Float
+  length: Float
+  price: Float
+  currency: String
+}
+
+type Sale {
+  id: ID!
+  propertyId: ID!
+  createdAt: String
+  updatedAt: String
+  price: Float!
+  currency: String!
+  executedAt: String!
+}
+
+type Property {
+  id: ID!
+  width: Float!
+  length: Float!
+}
+
+type Listing {
+  id: ID!
+  properties: [Property]!
+  createdAt: String!
+  updatedAt: String!
+}
+
+input ReadGroundInput {
+  id: ID!
+}
+
+input CreateGroundInput {
+  address: String!
+  location: String!
+}
+
+type CreateGroundResponse {
+  message: String!
+}
+
+input CreateSaleInput {
+  propertyId: ID!
+  price: Float!
+  currency: String!
+  executedAt: String!
+}
+
+type CreateSaleResponse {
+  message: String!
+}
+
+input PropertyInput {
+  id: ID!
+  width: Float!
+  length: Float!
+}
+
+input ProcessListingInput {
+  properties: [PropertyInput]!
+}
+
+type Query {
+  getGround(input: ReadGroundInput): Ground
+}
+
+type Mutation {
+  createGround(input: CreateGroundInput): CreateGroundResponse
+  createSale(input: CreateSaleInput): CreateSaleResponse
+  processListing(input: ProcessListingInput): Listing
+}
+
+schema {
+  query: Query
+  mutation: Mutation
+}
