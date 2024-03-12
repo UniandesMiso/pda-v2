@@ -1,0 +1,5 @@
+ariadne
+Flask
+pulsar-client
+pulsar-client[avro]
+requests
